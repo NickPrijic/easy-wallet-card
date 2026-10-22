@@ -10,7 +10,8 @@ Default prints field keys/labels with value LENGTHS only. --show-except K1,K2 pr
 --no-chain: explicitly skip the chain (signature math only); prints WARN and RESULT OK-UNTRUSTED, never RESULT OK.
 --cert PASS_CER: the embedded signer cert must be byte-identical (DER SHA-256) to this cert.
 --card CARD_JSON: pass.json sharingProhibited must equal the card's request (default true, as in makepass).
-Exit 0 = all checks pass.
+Exit codes: 0 = RESULT OK, 1 = RESULT FAILED, 2 = usage error, 3 = RESULT OK-UNTRUSTED (--no-chain:
+every other check passed but the trust chain was not verified).
 """
 import argparse, atexit, hashlib, json, os, shutil, signal, subprocess, sys, tempfile, zipfile
 
@@ -73,7 +74,8 @@ def dn(pem, which):
 
 
 def main():
-    ap = argparse.ArgumentParser(allow_abbrev=False, description="Easy Wallet Card: verify a .pkpass.")
+    ap = argparse.ArgumentParser(allow_abbrev=False, description="Easy Wallet Card: verify a .pkpass. "
+                                 "Exit 0 OK, 1 FAILED, 2 usage error, 3 OK-UNTRUSTED (--no-chain).")
     ap.add_argument("pkpass")
     ap.add_argument("--root", help="Apple Root CA cert (.cer/.pem) for chain verification")
     ap.add_argument("--wwdr", help="Apple WWDR G4 intermediate (.cer/.pem) for chain verification")
@@ -200,7 +202,7 @@ def main():
         print("RESULT OK-UNTRUSTED (--no-chain: trust chain NOT verified; NOT proof the pass is Apple-signed)")
     else:
         print("RESULT OK")
-    sys.exit(0 if ok_all else 1)
+    sys.exit(1 if not ok_all else (3 if a.no_chain else 0))
 
 
 if __name__ == "__main__":

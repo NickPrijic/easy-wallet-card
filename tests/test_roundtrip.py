@@ -179,6 +179,13 @@ class MakeVerifyTests(Base):
         v = self.verify(out, None, env=env)
         self.assertEqual(v.returncode, 1, v.stdout)
 
+    def test_no_chain_exits_3(self):
+        _, out = self.make()
+        v = sh(sys.executable, VERIFYPASS, out, "--no-chain")
+        self.assertEqual(v.returncode, 3, v.stdout)
+        self.assertIn("RESULT OK-UNTRUSTED", v.stdout)
+        self.assertNotIn("RESULT OK\n", v.stdout)
+
     def test_no_chain_tampered_exits_1(self):
         _, out = self.make()
         with zipfile.ZipFile(out, "a") as z:
@@ -292,10 +299,31 @@ class FinishTests(Base):
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertNotEqual(sha256(out), before)
 
+    def test_lock_symlink_to_outside_file_untouched(self):
+        keys, outdir = self.keydir(), os.path.join(self.w, "out")
+        os.mkdir(outdir, 0o700)
+        victim = os.path.join(self.w, "victim.txt")
+        with open(victim, "w") as f:
+            f.write("keep me")
+        os.symlink(victim, os.path.join(outdir, ".lock"))
+        r = self.finish(keys, os.path.join(outdir, "card.pkpass"))
+        self.assertEqual(r.returncode, 0, r.stdout)
+        with open(victim) as f:
+            self.assertEqual(f.read(), "keep me")
+
+    def test_lock_symlink_to_missing_path_creates_nothing(self):
+        keys, outdir = self.keydir(), os.path.join(self.w, "out")
+        os.mkdir(outdir, 0o700)
+        target = os.path.join(self.w, "should-not-exist")
+        os.symlink(target, os.path.join(outdir, ".lock"))
+        r = self.finish(keys, os.path.join(outdir, "card.pkpass"))
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertFalse(os.path.lexists(target))
+
     def test_overlapping_run_refused(self):
         keys, outdir = self.keydir(), os.path.join(self.w, "out")
         os.mkdir(outdir, 0o700)
-        fd = os.open(os.path.join(outdir, ".lock"), os.O_WRONLY | os.O_CREAT, 0o600)
+        fd = os.open(outdir, os.O_RDONLY)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             r = self.finish(keys, os.path.join(outdir, "card.pkpass"))
@@ -309,7 +337,7 @@ class FinishTests(Base):
         keys, outdir = self.keydir(), os.path.join(self.w, "out")
         os.mkdir(outdir, 0o700)
         live = os.path.join(outdir, ".finish-live01"); os.mkdir(live)
-        fd = os.open(os.path.join(outdir, ".lock"), os.O_WRONLY | os.O_CREAT, 0o600)
+        fd = os.open(outdir, os.O_RDONLY)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.finish(keys, os.path.join(outdir, "card.pkpass"))

@@ -4,6 +4,8 @@ Easy Wallet Card turns a small JSON file and a logo into a signed Apple Wallet p
 for example an insurance or membership card you want on your phone.
 It has no web service, no hosting, no `webServiceURL`/`authenticationToken`, and uses no third-party service.
 
+Easy Wallet Card is not affiliated with or endorsed by Apple or any insurer.
+
 Needs Python 3, Pillow (`python3 -m pip install pillow`), the `openssl` CLI, `curl`, and `flock`
 (Linux: util-linux; macOS: `brew install flock`). `make` is only needed for the tests.
 
@@ -56,7 +58,8 @@ The easy way builds, verifies, and only then moves the pass into place:
   On any failure or on SIGINT, SIGTERM, SIGHUP or SIGQUIT the temp dir is removed. A SIGKILL can't be caught,
   so stale `.makepass-*`, `.verifypass-*` and `.finish-*` dirs are swept at the next start.
 - It won't overwrite an existing pass unless you pass `--force`.
-- One run at a time: it holds `flock` on `.lock` in the output directory. An overlapping run is refused.
+- One run at a time: it holds `flock` on the output directory itself, opened read-only, so no lock file is ever
+  created, followed through a symlink, or truncated. An overlapping run is refused.
 
 Or run the two steps yourself:
 ```
@@ -82,7 +85,13 @@ AirDrop or email the `.pkpass` to your iPhone and tap it to add it to Wallet.
 - passTypeIdentifier and teamIdentifier must equal the signer's UID and OU. No webServiceURL or authenticationToken.
 - It prints value lengths only, never field values, unless you pass `--show-except key1,key2`.
 
-`verifypass.py` exits 0 only if all checks pass. `--no-chain` prints RESULT OK-UNTRUSTED.
+### Exit codes
+| code | meaning |
+|---|---|
+| 0 | RESULT OK: every check passed, including the trust chain |
+| 1 | RESULT FAILED |
+| 2 | usage error |
+| 3 | RESULT OK-UNTRUSTED: `--no-chain` was given, so the chain was not checked. Never treat this as OK. |
 
 ## Privacy
 The private key is handed to `openssl` by path. Its contents are never read, piped or printed, and the tools
@@ -92,6 +101,7 @@ dirs next to the output, never in /tmp. `makepass.py` prints no field values.
 ## Tests
 ```
 make test       # builds passes with a throwaway self-signed test CA chain; no network, no Apple account
+make mutation   # re-introduces old bugs and checks the tests catch them
 ```
 
 ## License

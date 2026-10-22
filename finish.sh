@@ -2,7 +2,8 @@
 # finish.sh - Easy Wallet Card: build a pass with makepass.py, verify it with verifypass.py, and only then move
 # it into place. The private key is handed to openssl by path; its contents are never read or printed.
 # The pass is built inside OUTDIR/.finish-*/ and renamed to OUT only if verifypass reports RESULT OK.
-# Refuses to overwrite an existing OUT unless --force. Holds flock on OUTDIR/.lock for the whole run.
+# Refuses to overwrite an existing OUT unless --force. Holds flock on OUT's directory itself for the whole run
+# (opened read-only: no lock file is ever created, followed through a symlink, or truncated).
 set -euo pipefail
 umask 077
 unset SSL_CERT_DIR SSL_CERT_FILE   # trust comes only from the pinned files in KEYDIR
@@ -56,9 +57,10 @@ python3 -c 'import os,sys; sys.exit(1 if os.stat(sys.argv[1]).st_mode & 0o077 el
 OUTDIR=$(dirname -- "$OUT")
 [ -d "$OUTDIR" ] || mkdir -p -m 700 -- "$OUTDIR"
 
-# One run at a time: an overlapping run fails fast and never sweeps a live run's temp dir.
-exec 9>"$OUTDIR/.lock"
-flock -n 9 || die "another finish.sh run holds the lock $OUTDIR/.lock; try again when it finishes"
+# One run at a time. Lock the directory itself, opened read-only (never 9> / 9>>): nothing is created,
+# followed or truncated. An overlapping run fails fast and never sweeps a live run's temp dir.
+exec 9<"$OUTDIR"
+flock -n 9 || die "another finish.sh run holds the lock on $OUTDIR; try again when it finishes"
 if [ -e "$OUT" ] && [ "$FORCE" != 1 ]; then die "$OUT already exists; pass --force to rebuild"; fi
 
 # Sweep stale temp dirs left by a killed run (SIGKILL can't be trapped). Safe only because we hold the lock.
