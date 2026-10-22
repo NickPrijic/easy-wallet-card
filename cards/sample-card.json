@@ -1,0 +1,21 @@
+{
+  "_comment": "SAMPLE with fake data. Copy, edit values, keep keys unique. Sections: header, primary, secondary, auxiliary (front), back.",
+  "description": "Example Dental Plan member card",
+  "organizationName": "Example Dental Plan",
+  "serialNumber": "00000000-0000-4000-8000-000000000001",
+  "colors": {"background": "rgb(255,255,255)", "foreground": "rgb(20,20,20)", "label": "rgb(0,110,80)"},
+  "header": [{"key": "plan", "label": "PLAN", "value": "Dental"}],
+  "primary": [{"key": "member", "label": "MEMBER", "value": "JANE SAMPLE"}],
+  "secondary": [
+    {"key": "memberId", "label": "MEMBER ID", "value": "EXAMPLE000001"},
+    {"key": "coverage", "label": "COVERAGE", "value": "Individual"}
+  ],
+  "auxiliary": [
+    {"key": "effective", "label": "EFFECTIVE DATE", "value": "2026-01-01"}
+  ],
+  "back": [
+    {"key": "website", "label": "Website", "value": "www.example.com"},
+    {"key": "note", "label": "Note", "value": "Sample card with made-up data. Not a real plan."}
+  ],
+  "barcode": {"format": "PKBarcodeFormatQR", "message": "SAMPLE-0000", "altText": "SAMPLE-0000"}
+}

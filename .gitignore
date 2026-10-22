@@ -1,0 +1,15 @@
+# Private material: never commit keys, certs, passes or build output
+*.key
+*.pem
+*.p12
+*.pkpass
+*.cer
+*.csr
+*.jks
+*.keystore
+keystore.properties
+local.properties
+keys/
+out/
+__pycache__/
+*.pyc
