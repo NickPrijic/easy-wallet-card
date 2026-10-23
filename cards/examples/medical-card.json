@@ -1,0 +1,66 @@
+{
+  "_comment": "SAMPLE emergency medical info card with fake data. A starting template: copy it to cards/, edit values, keep keys unique. Not a medical record.",
+  "description": "Example emergency medical info card",
+  "organizationName": "Example Medical Info",
+  "serialNumber": "00000000-0000-4000-8000-000000000005",
+  "colors": {
+    "background": "rgb(255,245,245)",
+    "foreground": "rgb(40,20,20)",
+    "label": "rgb(180,40,40)"
+  },
+  "header": [
+    {
+      "key": "blood",
+      "label": "BLOOD TYPE",
+      "value": "O+"
+    }
+  ],
+  "primary": [
+    {
+      "key": "name",
+      "label": "NAME",
+      "value": "Sam Sample"
+    }
+  ],
+  "secondary": [
+    {
+      "key": "allergy",
+      "label": "ALLERGIES",
+      "value": "None listed (example)"
+    },
+    {
+      "key": "id",
+      "label": "ID",
+      "value": "SAMPLE-MEDICAL-0000"
+    }
+  ],
+  "auxiliary": [
+    {
+      "key": "emergency",
+      "label": "EMERGENCY",
+      "value": "Casey Sample 555-0101"
+    }
+  ],
+  "back": [
+    {
+      "key": "disclaimer",
+      "label": "Disclaimer",
+      "value": "Informational only. This is not a medical record and not medical advice."
+    },
+    {
+      "key": "meds",
+      "label": "Medications",
+      "value": "None listed (example)"
+    },
+    {
+      "key": "note",
+      "label": "Note",
+      "value": "Sample card with made-up data. Not a real person."
+    }
+  ],
+  "barcode": {
+    "format": "PKBarcodeFormatQR",
+    "message": "SAMPLE-MEDICAL-0000",
+    "altText": "SAMPLE-MEDICAL-0000"
+  }
+}

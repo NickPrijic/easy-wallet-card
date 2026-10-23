@@ -3,7 +3,7 @@ makepass.py, verifypass.py and finish.sh accept good passes and reject bad ones.
 
 Nothing here touches Apple or the network. All keys and certs are generated into a temp dir per run.
 """
-import fcntl, glob, hashlib, json, os, shutil, signal, stat, subprocess, sys, tempfile, time, unittest, zipfile
+import fcntl, glob, hashlib, json, os, re, shutil, signal, stat, subprocess, sys, tempfile, time, unittest, zipfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAKEPASS = os.path.join(REPO, "makepass.py")
@@ -11,6 +11,8 @@ VERIFYPASS = os.path.join(REPO, "verifypass.py")
 FINISH = os.path.join(REPO, "finish.sh")
 CARD = os.path.join(REPO, "cards", "sample-card.json")
 LOGO = os.path.join(REPO, "cards", "sample-logo.png")
+EXAMPLES = os.path.join(REPO, "cards", "examples")
+EXAMPLE_NAMES = ("loyalty", "business", "wifi-guest", "medical", "pet")
 APPLE_WWDR_SUBJ = "/CN=Apple Worldwide Developer Relations Certification Authority/OU=G4/O=Apple Inc./C=US"  # DER order, as Apple issues it
 PTI, TEAM = "pass.com.example.easywalletcard", "ABCDE12345"
 OPENSSL = shutil.which("openssl")
@@ -683,6 +685,162 @@ class KeyOpenTests(Base):
         fake = lambda uid: os.stat_result((stat.S_IFLNK | 0o777, 0, 0, 1, uid, 0, 0, 0, 0, 0))
         self.assertEqual(makepass._system_link(fake(0)), os.geteuid() != 0)  # root-owned, e.g. macOS /var
         self.assertFalse(makepass._system_link(fake(os.geteuid() or 1000)))  # anything a user could plant
+
+
+class ExampleCardTests(Base):
+    """NIC-61: example templates build, and every string field is allowlisted fake data (no personal denylist)."""
+
+    WIFI_OK = "WIFI:T:WPA;S:ExampleGuest;P:not-a-real-password;;"
+    ALLOWED_GIVENS = {"Jordan", "Alex", "Sam", "Casey", "Robin", "Pickles"}
+    ALLOWED_SURNAMES = {"Sample", "Example"}
+    NAME_KEYS = {"name", "member", "owner", "pet", "emergency", "contact"}
+    EXAMPLE_HOSTS = ("example.com", "example.org", "example.net")
+
+    def _load(self, name):
+        path = os.path.join(EXAMPLES, f"{name}-card.json")
+        with open(path) as f:
+            return path, json.load(f)
+
+    def _strings(self, card):
+        for sec in ("header", "primary", "secondary", "auxiliary", "back"):
+            for f in card.get(sec, []) or []:
+                if not isinstance(f, dict):
+                    continue
+                key = f.get("key", "?")
+                for fk in ("label", "value"):
+                    if isinstance(f.get(fk), str):
+                        yield f"{sec}.{key}.{fk}", key, f[fk]
+        for k in ("description", "organizationName", "logoText", "serialNumber"):
+            if isinstance(card.get(k), str):
+                yield k, k, card[k]
+        bc = card.get("barcode") or {}
+        for k in ("message", "altText"):
+            if isinstance(bc.get(k), str):
+                yield f"barcode.{k}", k, bc[k]
+
+    def _assert_fake(self, card, where_prefix=""):
+        for where, key, val in self._strings(card):
+            loc = f"{where_prefix}{where}"
+            # URLs / emails: host must be example.com|org|net only
+            for m in re.finditer(r"(?i)\b(?:https?://|mailto:)?([a-z0-9-]+(?:\.[a-z0-9-]+)+)\b", val):
+                host = m.group(1).lower()
+                if host.startswith("www."):
+                    host = host[4:]
+                # skip pure numeric (phones handled below) and UUID-like
+                if re.fullmatch(r"[\d.]+", host):
+                    continue
+                self.assertIn(host, self.EXAMPLE_HOSTS, f"{loc}: non-example host {host!r} in {val!r}")
+            # Phones: only 555-01xx. Any other 555-xxxx fails; other phone-like forms caught via digit runs.
+            for phone in re.findall(r"\b555-\d{4}\b", val):
+                self.assertRegex(phone, r"\A555-01\d\d\Z", f"{loc}: non-fiction phone {phone!r}")
+            # Letter-prefixed IDs: only EXAMPLE… / SAMPLE… (rejects ABC123456789)
+            bad_id = re.search(r"\b(?!(?:EXAMPLE|SAMPLE)\d)[A-Z]{2,}\d{6,}\b", val)
+            self.assertIsNone(bad_id, f"{loc}: letter-prefixed ID not EXAMPLE/SAMPLE: {val!r}")
+            # Digit runs of 6+: all-zero OK; otherwise must be glued to EXAMPLE/SAMPLE.
+            # Template serialNumbers are fixed zero-ish UUIDs; allow that one shape.
+            if where == "serialNumber":
+                self.assertRegex(val, r"\A00000000-0000-4000-8000-00000000000[2-6]\Z",
+                                 f"{loc}: serialNumber must be the template UUID shape")
+            else:
+                for m in re.finditer(r"\d{6,}", val):
+                    d = m.group(0)
+                    if set(d) == {"0"}:
+                        continue
+                    pre = val[max(0, m.start() - 16):m.start()]
+                    self.assertRegex(pre, r"(?i)(?:EXAMPLE|SAMPLE)$",
+                                     f"{loc}: digit run {d!r} not EXAMPLE/SAMPLE-prefixed")
+            # Capitalized two-word names in name/contact-like fields (Title Case or ALL CAPS)
+            if key in self.NAME_KEYS:
+                for m in re.finditer(r"\b([A-Z][A-Za-z]+)\s+([A-Z][A-Za-z]+)\b", val):
+                    g, sur = m.group(1).title(), m.group(2).title()
+                    self.assertIn(g, self.ALLOWED_GIVENS, f"{loc}: given name {m.group(1)!r} not in allowlist")
+                    self.assertIn(sur, self.ALLOWED_SURNAMES, f"{loc}: surname {m.group(2)!r} not in allowlist")
+            # Wi-Fi payload
+            if val.startswith("WIFI:"):
+                self.assertEqual(val, self.WIFI_OK, f"{loc}: Wi-Fi string must be the documented placeholder")
+
+    def test_examples_build_and_verify(self):
+        for n in EXAMPLE_NAMES:
+            path, card = self._load(n)
+            logo = os.path.join(EXAMPLES, f"{n}-logo.png")
+            self.assertTrue(os.path.isfile(logo), logo)
+            # logo size
+            from PIL import Image
+            im = Image.open(logo)
+            self.assertEqual(im.size, (320, 100), n)
+            out = os.path.join(self.w, f"{n}.pkpass")
+            r = sh(sys.executable, MAKEPASS, "--card", path, "--logo", logo,
+                   "--cert", self.good.cert, "--key", self.good.key, "--wwdr", self.good.inter, "--out", out)
+            self.assertEqual(r.returncode, 0, r.stdout)
+            v = self.verify(out, None, "--cert", self.good.cert)
+            self.assertEqual(v.returncode, 3, v.stdout)
+            self.assertIn("RESULT OK-TEST-UNPINNED", v.stdout)
+            # barcode format sanity
+            bc = card.get("barcode") or {}
+            if n == "loyalty":
+                self.assertEqual(bc.get("format"), "PKBarcodeFormatCode128")
+
+    def test_examples_hold_only_fake_data(self):
+        for n in EXAMPLE_NAMES:
+            _, card = self._load(n)
+            self._assert_fake(card, where_prefix=f"{n}:")
+            # medical disclaimer
+            if n == "medical":
+                back = " ".join(f.get("value", "") for f in card.get("back", []))
+                self.assertIn("This is not a medical record and not medical advice.", back)
+            # made-up note on every card
+            back = " ".join(f.get("value", "") for f in card.get("back", []))
+            self.assertIn("made-up data", back.lower())
+
+    def test_examples_gitignore_tracks_only_named_files(self):
+        g = os.path.join(self.w, "scratch")
+        os.makedirs(os.path.join(g, "cards", "examples"))
+        git = lambda *a: sh("git", "-C", g, "-c", "core.excludesFile=/dev/null", *a)
+        self.assertEqual(git("init", "-q").returncode, 0)
+        shutil.copy(os.path.join(REPO, ".gitignore"), g)
+        for n in EXAMPLE_NAMES:
+            for suf in ("-card.json", "-logo.png"):
+                src = os.path.join(EXAMPLES, f"{n}{suf}")
+                shutil.copy(src, os.path.join(g, "cards", "examples", f"{n}{suf}"))
+        shutil.copy(os.path.join(EXAMPLES, "make_logos.py"), os.path.join(g, "cards", "examples", "make_logos.py"))
+        # extras must stay ignored
+        Path = __import__("pathlib").Path; Path(os.path.join(g, "cards", "examples", "my-card.json")).write_text("{}")
+        open(os.path.join(g, "cards", "examples", "loyalty-card.json.bak"), "w").write("{}")
+        r = git("status", "--porcelain", "--ignored", "cards")
+        tracked_ok = {f"cards/examples/{n}{s}" for n in EXAMPLE_NAMES for s in ("-card.json", "-logo.png")}
+        tracked_ok.add("cards/examples/make_logos.py")
+        # use check-ignore
+        for n in EXAMPLE_NAMES:
+            for suf in ("-card.json", "-logo.png"):
+                rel = f"cards/examples/{n}{suf}"
+                self.assertNotEqual(git("check-ignore", "-q", rel).returncode, 0, rel)
+        self.assertNotEqual(git("check-ignore", "-q", "cards/examples/make_logos.py").returncode, 0)
+        self.assertEqual(git("check-ignore", "-q", "cards/examples/my-card.json").returncode, 0)
+        self.assertEqual(git("check-ignore", "-q", "cards/examples/loyalty-card.json.bak").returncode, 0)
+
+    def test_fake_data_allowlist_rejects_altered_cards(self):
+        """Negative cases: each altered field must be caught by _assert_fake."""
+        _, base = self._load("business")
+        cases = []
+        # real-looking name
+        c = json.loads(json.dumps(base)); c["primary"][0]["value"] = "John Smith"; cases.append(("name", c))
+        # letter-prefixed ID
+        c = json.loads(json.dumps(base)); c["secondary"][0]["value"] = "ABC123456789"; cases.append(("ABC id", c))
+        # 6-digit ID
+        c = json.loads(json.dumps(base)); c["secondary"].append({"key": "mid", "label": "ID", "value": "123456"}); cases.append(("6digit", c))
+        # bare non-example domain
+        c = json.loads(json.dumps(base)); c["back"][0]["value"] = "https://acme-corp.com/x"; cases.append(("domain", c))
+        # real Wi-Fi password
+        _, wifi = self._load("wifi-guest")
+        c = json.loads(json.dumps(wifi)); c["barcode"]["message"] = "WIFI:T:WPA;S:ExampleGuest;P:s3cret-real;;"; cases.append(("wifi", c))
+        # real phone in barcode.message
+        c = json.loads(json.dumps(base)); c["barcode"]["message"] = "555-2368"; cases.append(("phone-bc", c))
+        # real-looking microchip in barcode
+        _, pet = self._load("pet")
+        c = json.loads(json.dumps(pet)); c["barcode"]["message"] = "981020000000000"; cases.append(("chip", c))
+        for label, card in cases:
+            with self.assertRaises(AssertionError, msg=label):
+                self._assert_fake(card, where_prefix=f"neg-{label}:")
 
 
 if __name__ == "__main__":

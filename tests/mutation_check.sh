@@ -79,4 +79,19 @@ mutant "pubkey match reopens the key by path" makepass.py \
 mutant "fd mode check dropped" makepass.py \
   $'    st = os.fstat(kfd)\n    if not stat.S_ISREG(st.st_mode) or st.st_mode & 0o077:' \
   $'    st = os.fstat(kfd)\n    if False:' test_makepass_rejects_group_readable_key
+# NIC-61 example cards: allowlist fake-data guards
+mutant "example with a non-fictional phone" cards/examples/business-card.json '"555-0100"' '"555-2368"' \
+  test_examples_hold_only_fake_data
+mutant "example with a letter-prefixed ID" cards/examples/loyalty-card.json '"EXAMPLE00000001"' '"ABC123456789"' \
+  test_examples_hold_only_fake_data
+mutant "example with a non-example URL" cards/examples/loyalty-card.json 'https://example.com/rewards' 'https://acme-corp.com/rewards' \
+  test_examples_hold_only_fake_data
+mutant "example with a real Wi-Fi password" cards/examples/wifi-guest-card.json \
+  'WIFI:T:WPA;S:ExampleGuest;P:not-a-real-password;;' 'WIFI:T:WPA;S:ExampleGuest;P:s3cret-real;;' \
+  test_examples_hold_only_fake_data
+mutant "medical disclaimer dropped" cards/examples/medical-card.json 'This is not a medical record and not medical advice.' 'Keep this current.' \
+  test_examples_hold_only_fake_data
+mutant "barcode message carries a real phone" cards/examples/business-card.json \
+  '"message": "https://example.com/studio"' '"message": "555-2368"' \
+  test_examples_hold_only_fake_data
 exit $status

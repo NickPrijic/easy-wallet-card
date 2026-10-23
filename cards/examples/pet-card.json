@@ -1,0 +1,76 @@
+{
+  "_comment": "SAMPLE pet reference card with fake data. A starting template: copy it to cards/, edit values, keep keys unique.",
+  "description": "Example pet reference card for Pickles",
+  "organizationName": "Example Pet Reference",
+  "serialNumber": "00000000-0000-4000-8000-000000000006",
+  "colors": {
+    "background": "rgb(255,248,240)",
+    "foreground": "rgb(50,35,25)",
+    "label": "rgb(150,80,40)"
+  },
+  "header": [
+    {
+      "key": "species",
+      "label": "SPECIES",
+      "value": "Dog"
+    }
+  ],
+  "primary": [
+    {
+      "key": "pet",
+      "label": "PET",
+      "value": "Pickles"
+    }
+  ],
+  "secondary": [
+    {
+      "key": "breed",
+      "label": "BREED",
+      "value": "Mixed"
+    },
+    {
+      "key": "microchip",
+      "label": "MICROCHIP (EXAMPLE)",
+      "value": "000000000000000"
+    }
+  ],
+  "auxiliary": [
+    {
+      "key": "vet",
+      "label": "VET",
+      "value": "Example Animal Clinic 555-0102"
+    },
+    {
+      "key": "rabies",
+      "label": "RABIES TAG",
+      "value": "EXAMPLE-0000"
+    }
+  ],
+  "back": [
+    {
+      "key": "owner",
+      "label": "Owner",
+      "value": "Robin Sample 555-0103"
+    },
+    {
+      "key": "vetBack",
+      "label": "Vet",
+      "value": "Example Animal Clinic 555-0102"
+    },
+    {
+      "key": "care",
+      "label": "Care notes",
+      "value": "Friendly. No known allergies. Feeds twice a day (example)."
+    },
+    {
+      "key": "note",
+      "label": "Note",
+      "value": "Sample card with made-up data. Not a real pet, microchip or clinic."
+    }
+  ],
+  "barcode": {
+    "format": "PKBarcodeFormatQR",
+    "message": "EXAMPLE-MICROCHIP-000000000000000",
+    "altText": "000000000000000 (EXAMPLE)"
+  }
+}

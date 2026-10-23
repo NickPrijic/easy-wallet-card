@@ -1,0 +1,55 @@
+{
+  "_comment": "SAMPLE loyalty card with fake data. A starting template: copy it to cards/, edit values, keep keys unique.",
+  "description": "Example Corner Market rewards card",
+  "organizationName": "Example Corner Market",
+  "serialNumber": "00000000-0000-4000-8000-000000000002",
+  "logoText": "Rewards",
+  "colors": {
+    "background": "rgb(250,244,230)",
+    "foreground": "rgb(40,30,20)",
+    "label": "rgb(170,90,20)"
+  },
+  "header": [
+    {
+      "key": "tier",
+      "label": "TIER",
+      "value": "Gold"
+    }
+  ],
+  "primary": [
+    {
+      "key": "member",
+      "label": "MEMBER",
+      "value": "JORDAN SAMPLE"
+    }
+  ],
+  "secondary": [
+    {
+      "key": "memberNumber",
+      "label": "MEMBER NO.",
+      "value": "EXAMPLE00000001"
+    },
+    {
+      "key": "since",
+      "label": "MEMBER SINCE",
+      "value": "2026"
+    }
+  ],
+  "back": [
+    {
+      "key": "website",
+      "label": "Website",
+      "value": "https://example.com/rewards"
+    },
+    {
+      "key": "note",
+      "label": "Note",
+      "value": "Sample card with made-up data. Not a real store or loyalty program."
+    }
+  ],
+  "barcode": {
+    "format": "PKBarcodeFormatCode128",
+    "message": "EXAMPLE00000001",
+    "altText": "EXAMPLE00000001"
+  }
+}

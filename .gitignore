@@ -19,6 +19,21 @@ out/
 cards/*
 !cards/sample-card.json
 !cards/sample-logo.png
+# Example starting templates (fake data). Only these exact files are tracked; anything else you put in
+# cards/examples/ stays ignored.
+!cards/examples/
+cards/examples/*
+!cards/examples/loyalty-card.json
+!cards/examples/loyalty-logo.png
+!cards/examples/business-card.json
+!cards/examples/business-logo.png
+!cards/examples/wifi-guest-card.json
+!cards/examples/wifi-guest-logo.png
+!cards/examples/medical-card.json
+!cards/examples/medical-logo.png
+!cards/examples/pet-card.json
+!cards/examples/pet-logo.png
+!cards/examples/make_logos.py
 # Build temp dirs (can hold card fields)
 .makepass-*/
 .verifypass-*/

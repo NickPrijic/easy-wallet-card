@@ -29,11 +29,11 @@ Signing a pass that iPhones accept needs an Apple Developer Program membership.
    ./fetch-apple-certs.sh keys
    ```
 
-`keys/`, `out/`, your own cards (everything in `cards/` except the two samples), keys, certs, CSRs, passes and
-temp dirs are in `.gitignore`. Never commit them.
+`keys/`, `out/`, your own cards (everything in `cards/` except the samples and the example files listed in
+`.gitignore`), keys, certs, CSRs, passes and temp dirs are in `.gitignore`. Never commit them.
 
 ## 2. Make your card
-Copy `cards/sample-card.json`, edit the values, and use your own logo.
+Copy `cards/sample-card.json` (or one of the [example cards](#example-cards)), edit the values, and use your own logo.
 
 | key | meaning |
 |---|---|
@@ -46,6 +46,22 @@ Copy `cards/sample-card.json`, edit the values, and use your own logo.
 
 Field keys must be unique across all sections. `--logo` is fitted into logo.png at 160x50 points, with @2x and
 @3x versions. `--icon` (or the logo, if no icon is given) is centered on a square for icon.png at 29x29.
+
+### Example cards
+`cards/examples/` has five starting templates (loyalty, business, Wi-Fi guest, emergency medical info, pet
+reference), each a card JSON plus an original placeholder logo drawn by `cards/examples/make_logos.py`, all with
+made-up data. Copy one to `cards/` before editing; never deliver an example unedited.
+
+| card | build command |
+|---|---|
+| Loyalty (Code128) | `./finish.sh --card cards/examples/loyalty-card.json --logo cards/examples/loyalty-logo.png --keys keys --out out/loyalty.pkpass` |
+| Business card | `./finish.sh --card cards/examples/business-card.json --logo cards/examples/business-logo.png --keys keys --out out/business.pkpass` |
+| Wi-Fi guest | `./finish.sh --card cards/examples/wifi-guest-card.json --logo cards/examples/wifi-guest-logo.png --keys keys --out out/wifi-guest.pkpass` |
+| Emergency medical info | `./finish.sh --card cards/examples/medical-card.json --logo cards/examples/medical-logo.png --keys keys --out out/medical.pkpass` |
+| Pet reference | `./finish.sh --card cards/examples/pet-card.json --logo cards/examples/pet-logo.png --keys keys --out out/pet.pkpass` |
+
+Only the two samples and these example files are tracked; anything else you put in `cards/` or
+`cards/examples/` stays ignored.
 
 ## 3. Build and verify
 The easy way builds, verifies, and only then moves the pass into place:

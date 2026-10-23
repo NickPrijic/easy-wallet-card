@@ -13,7 +13,7 @@ card, into an Apple Wallet pass. Follow the steps in order. Commands run from th
    value lengths only. Don't pass `--show-except`.
 3. Before any commit, run `git status` and `git diff --cached --name-only`. Confirm nothing under `keys/` or
    `out/`, no `.pkpass`, `.key`, `.cer`, `.csr`, `.certSigningRequest`, and no card except
-   `cards/sample-card.json` and `cards/sample-logo.png` is staged. Most of these are in `.gitignore`, but check
+   `cards/sample-card.json`, `cards/sample-logo.png` and the unchanged files in `cards/examples/` is staged. Most of these are in `.gitignore`, but check
    anyway (for example `git add -f` bypasses it). You don't normally need to commit anything to make a pass.
 4. Never deliver a pass unless `verifypass.py` printed `RESULT OK` and exited 0 (step 8). A test build or an
    untrusted result is never delivered.
@@ -67,7 +67,8 @@ pasting member IDs into chat:
 cp cards/sample-card.json cards/my-card.json
 cp cards/sample-logo.png cards/my-logo.png
 ```
-Ask for every real value. Don't invent values or reuse the sample's. Put a fresh random UUID in
+Ask for every real value. Don't invent values or reuse the sample's or an example's. Prefer a template from
+`cards/sample-card.json` or `cards/examples/` (copy to `cards/` first; never deliver an example unedited). Put a fresh random UUID in
 `serialNumber` (`python3 -c 'import uuid; print(uuid.uuid4())'`). Validate with
 `python3 -m json.tool cards/my-card.json` and confirm `git check-ignore -q cards/my-card.json`.
 
@@ -130,4 +131,4 @@ git status
 git diff --cached --name-only
 ```
 Nothing under `keys/` or `out/`, no `*.pkpass`, `*.key`, `*.cer`, `*.csr`, and no card other than the two
-samples. If anything like that is staged, unstage it (`git restore --staged <path>`) and tell the person.
+samples and the unchanged `cards/examples/` templates. If anything like that is staged, unstage it (`git restore --staged <path>`) and tell the person.

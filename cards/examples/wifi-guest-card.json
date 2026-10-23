@@ -1,0 +1,54 @@
+{
+  "_comment": "SAMPLE Wi-Fi guest card with fake data. A starting template: copy it to cards/, edit values, keep keys unique.",
+  "description": "Example guest Wi-Fi card",
+  "organizationName": "Example Guest Wi-Fi",
+  "serialNumber": "00000000-0000-4000-8000-000000000004",
+  "colors": {
+    "background": "rgb(20,40,60)",
+    "foreground": "rgb(240,248,255)",
+    "label": "rgb(120,200,255)"
+  },
+  "header": [
+    {
+      "key": "network",
+      "label": "NETWORK",
+      "value": "ExampleGuest"
+    }
+  ],
+  "primary": [
+    {
+      "key": "ssid",
+      "label": "SSID",
+      "value": "ExampleGuest"
+    }
+  ],
+  "secondary": [
+    {
+      "key": "security",
+      "label": "SECURITY",
+      "value": "WPA2"
+    },
+    {
+      "key": "guest",
+      "label": "GUEST OF",
+      "value": "Example House"
+    }
+  ],
+  "back": [
+    {
+      "key": "howto",
+      "label": "How to join",
+      "value": "Scan the QR code or join SSID ExampleGuest with the guest password on the front."
+    },
+    {
+      "key": "note",
+      "label": "Note",
+      "value": "Sample card with made-up data. Not a real network or password."
+    }
+  ],
+  "barcode": {
+    "format": "PKBarcodeFormatQR",
+    "message": "WIFI:T:WPA;S:ExampleGuest;P:not-a-real-password;;",
+    "altText": "ExampleGuest (guest Wi-Fi)"
+  }
+}

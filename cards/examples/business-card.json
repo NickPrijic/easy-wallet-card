@@ -1,0 +1,59 @@
+{
+  "_comment": "SAMPLE business card with fake data. A starting template: copy it to cards/, edit values, keep keys unique. 555-01xx numbers are reserved for fiction.",
+  "description": "Example business card for Alex Example",
+  "organizationName": "Example Studio",
+  "serialNumber": "00000000-0000-4000-8000-000000000003",
+  "colors": {
+    "background": "rgb(24,32,48)",
+    "foreground": "rgb(245,245,245)",
+    "label": "rgb(140,190,255)"
+  },
+  "header": [
+    {
+      "key": "company",
+      "label": "COMPANY",
+      "value": "Example Studio"
+    }
+  ],
+  "primary": [
+    {
+      "key": "name",
+      "label": "NAME",
+      "value": "Alex Example"
+    }
+  ],
+  "secondary": [
+    {
+      "key": "title",
+      "label": "TITLE",
+      "value": "Designer"
+    },
+    {
+      "key": "phone",
+      "label": "PHONE",
+      "value": "555-0100"
+    }
+  ],
+  "back": [
+    {
+      "key": "email",
+      "label": "Email",
+      "value": "alex@example.com"
+    },
+    {
+      "key": "web",
+      "label": "Web",
+      "value": "https://example.com/studio"
+    },
+    {
+      "key": "note",
+      "label": "Note",
+      "value": "Sample card with made-up data. Not a real person or company."
+    }
+  ],
+  "barcode": {
+    "format": "PKBarcodeFormatQR",
+    "message": "https://example.com/studio",
+    "altText": "example.com/studio"
+  }
+}
