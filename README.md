@@ -27,7 +27,8 @@ Signing a pass that iPhones accept needs an Apple Developer Program membership.
    ./fetch-apple-certs.sh keys
    ```
 
-`keys/`, `out/`, keys, certs and passes are in `.gitignore`. Never commit them.
+`keys/`, `out/`, your own cards (everything in `cards/` except the two samples), keys, certs, CSRs, passes and
+temp dirs are in `.gitignore`. Never commit them.
 
 ## 2. Make your card
 Copy `cards/sample-card.json`, edit the values, and use your own logo.
@@ -58,6 +59,10 @@ The easy way builds, verifies, and only then moves the pass into place:
   On any failure or on SIGINT, SIGTERM, SIGHUP or SIGQUIT the temp dir is removed. A SIGKILL can't be caught,
   so stale `.makepass-*`, `.verifypass-*` and `.finish-*` dirs are swept at the next start.
 - It won't overwrite an existing pass unless you pass `--force`.
+- `--test-unpinned-chain` is for throwaway test chains only. Such a build is never installed at `--out`: it is
+  left next to it with `.TEST-UNPINNED` before `.pkpass` (for example `out/my-card.TEST-UNPINNED.pkpass`),
+  and finish.sh exits 4 with `TEST BUILD … NOT Apple-verified`.
+- Paths that start with `-` work; finish.sh passes them on as `./-name`.
 - One run at a time: it holds `flock` on the output directory itself, opened read-only, so no lock file is ever
   created, followed through a symlink, or truncated. An overlapping run is refused.
 
@@ -91,11 +96,14 @@ AirDrop or email the `.pkpass` to your iPhone and tap it to add it to Wallet.
 | 0 | RESULT OK: every check passed, including the trust chain |
 | 1 | RESULT FAILED |
 | 2 | usage error |
-| 3 | RESULT OK-UNTRUSTED: `--no-chain` was given, so the chain was not checked. Never treat this as OK. |
+| 3 | not Apple-verified: RESULT OK-UNTRUSTED (`--no-chain`, chain not checked) or RESULT OK-TEST-UNPINNED (`--test-unpinned-chain`, Apple pins not enforced). Never treat this as OK. |
+
+`finish.sh` exits 0 (READY, installed at `--out`), 1 (failed, nothing installed), 2 (usage error) or
+4 (TEST BUILD with `--test-unpinned-chain`, left at the `.TEST-UNPINNED.pkpass` name, not Apple-verified).
 
 ## Privacy
 The private key is handed to `openssl` by path. Its contents are never read, piped or printed, and the tools
-refuse a key file that group or others can read. Outputs are written mode 600. Temp files live in private
+refuse a key file that group or others can read, or that is a symlink. Outputs are written mode 600. Temp files live in private
 dirs next to the output, never in /tmp. `makepass.py` prints no field values.
 
 ## Tests

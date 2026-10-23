@@ -14,6 +14,12 @@ LOGO = os.path.join(REPO, "cards", "sample-logo.png")
 APPLE_WWDR_SUBJ = "/CN=Apple Worldwide Developer Relations Certification Authority/OU=G4/O=Apple Inc./C=US"  # DER order, as Apple issues it
 PTI, TEAM = "pass.com.example.easywalletcard", "ABCDE12345"
 OPENSSL = shutil.which("openssl")
+TEST_BUILD = 4  # finish.sh exit code for a --test-unpinned-chain build
+
+
+def tgt(out):
+    """Where finish.sh --test-unpinned-chain leaves the pass (never at OUT itself)."""
+    return out[:-len(".pkpass")] + ".TEST-UNPINNED.pkpass"
 
 
 def sh(*args, **kw):
@@ -31,6 +37,26 @@ def ossl(*args):
 def sha256(path):
     with open(path, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()
+
+
+def patched_tool(where, chain):
+    """Copy of the tools with the Apple pins swapped for `chain`'s, to exercise the real pinned path."""
+    tool = os.path.join(where, "tool")
+    os.mkdir(tool)
+    for n in ("finish.sh", "makepass.py", "verifypass.py", "fetch-apple-certs.sh"):
+        shutil.copy2(os.path.join(REPO, n), tool)
+    der = lambda pem: hashlib.sha256(subprocess.run([OPENSSL, "x509", "-in", pem, "-outform", "DER"],
+                                                    stdout=subprocess.PIPE, check=True).stdout).hexdigest()
+    pins = {"ea4757885538dd8cb59ff4556f676087d83c85e70902c122e42c0808b5bce14c": (der(chain.inter), sha256(chain.inter)),
+            "b0b1730ecbc7ff4505142c49f1295e6eda6bcaed7e2c68c5be91b5a11001f024": (der(chain.root), sha256(chain.root))}
+    for n, idx in (("verifypass.py", 0), ("fetch-apple-certs.sh", 1)):
+        p = os.path.join(tool, n)
+        s = open(p).read()
+        for apple, mine in pins.items():
+            assert apple in s
+            s = s.replace(apple, mine[idx])
+        open(p, "w").write(s)
+    return tool
 
 
 class Chain:
@@ -125,8 +151,8 @@ class MakeVerifyTests(Base):
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertEqual(stat.S_IMODE(os.stat(out).st_mode), 0o600)
         v = self.verify(out, None, "--cert", self.good.cert, "--card", CARD)
-        self.assertEqual(v.returncode, 0, v.stdout)
-        self.assertIn("RESULT OK", v.stdout)
+        self.assertEqual(v.returncode, 3, v.stdout)
+        self.assertIn("RESULT OK-TEST-UNPINNED", v.stdout)
         self.assertNotIn("FAIL ", v.stdout)
 
     def test_no_temp_dirs_left(self):
@@ -242,6 +268,64 @@ class MakeVerifyTests(Base):
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertFalse(os.path.exists(out))
 
+    def test_unpinned_verify_is_never_plain_ok(self):
+        _, out = self.make()
+        v = self.verify(out)  # --test-unpinned-chain
+        self.assertEqual(v.returncode, 3, v.stdout)
+        self.assertIn("RESULT OK-TEST-UNPINNED", v.stdout)
+        self.assertNotIn("RESULT OK\n", v.stdout)
+
+    def test_pinned_ok_with_patched_pins(self):
+        tool = patched_tool(self.w, self.good)
+        _, out = self.make()
+        v = sh(sys.executable, os.path.join(tool, "verifypass.py"), out, "--root", self.good.root,
+               "--wwdr", self.good.inter, "--cert", self.good.cert, "--card", CARD)
+        self.assertEqual(v.returncode, 0, v.stdout)
+        self.assertTrue(v.stdout.endswith("RESULT OK\n"), v.stdout)
+
+    def test_makepass_refuses_symlinked_key(self):
+        k = os.path.join(self.w, "real.key"); shutil.copy(self.good.key, k); os.chmod(k, 0o600)
+        link = os.path.join(self.w, "link.key"); os.symlink(k, link)
+        out = os.path.join(self.w, "p.pkpass")
+        r = sh(sys.executable, MAKEPASS, "--card", CARD, "--logo", LOGO, "--cert", self.good.cert, "--key", link,
+               "--wwdr", self.good.inter, "--out", out)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("symlink", r.stdout)
+        self.assertFalse(os.path.exists(out))
+
+    def test_python_tools_accept_dash_paths_with_equals_or_double_dash(self):
+        for src, dst in ((CARD, "-card.json"), (LOGO, "-logo.png")):
+            shutil.copy(src, os.path.join(self.w, dst))
+        r = sh(sys.executable, MAKEPASS, "--card=-card.json", "--logo=-logo.png", "--cert", self.good.cert,
+               "--key", self.good.key, "--wwdr", self.good.inter, "--out=-p.pkpass", cwd=self.w)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        v = sh(sys.executable, VERIFYPASS, "--no-chain", "--", "-p.pkpass", cwd=self.w)
+        self.assertEqual(v.returncode, 3, v.stdout)
+        bad = sh(sys.executable, MAKEPASS, "--card", "-card.json", "--logo", LOGO, "--cert", self.good.cert,
+                 "--key", self.good.key, "--wwdr", self.good.inter, "--out", "x.pkpass", cwd=self.w)
+        self.assertEqual(bad.returncode, 2)
+        self.assertIn("./-name", sh(sys.executable, MAKEPASS, "--help").stdout)
+
+    def test_gitignore_keeps_private_files_out(self):
+        g = os.path.join(self.w, "scratch")
+        os.makedirs(os.path.join(g, "cards"))
+        git = lambda *a: sh("git", "-C", g, "-c", "core.excludesFile=/dev/null", *a)
+        self.assertEqual(git("init", "-q").returncode, 0)
+        shutil.copy(os.path.join(REPO, ".gitignore"), g)
+        for n in ("sample-card.json", "sample-logo.png"):
+            shutil.copy(os.path.join(REPO, "cards", n), os.path.join(g, "cards", n))
+        private = ["cards/my-card.json", "cards/my-logo.png", "x.certSigningRequest", "x.crt", "x.der", "x.pfx",
+                   "x.key", "x.pem", "x.p12", "x.cer", "x.csr", "x.pkpass", "keys/pass.cer", "out/x.pkpass",
+                   ".makepass-ab12/pass.json", ".verifypass-cd34/pass/pass.json", ".finish-ef56/unverified.pkpass",
+                   "sub/.makepass-x/pass.json"]
+        for f in private:
+            os.makedirs(os.path.dirname(os.path.join(g, f)) or g, exist_ok=True)
+            with open(os.path.join(g, f), "w") as fh:
+                fh.write("private")
+        self.assertEqual(git("add", "-A").returncode, 0)
+        staged = set(git("diff", "--cached", "--name-only").stdout.split())
+        self.assertEqual(staged, {".gitignore", "cards/sample-card.json", "cards/sample-logo.png"})
+
     def test_verifypass_signal_cleans_temp(self):
         _, out = self.make()
         shim = os.path.join(self.w, "shim"); os.mkdir(shim)
@@ -271,11 +355,12 @@ class FinishTests(Base):
     def test_finish_roundtrip_ok(self):
         keys, out = self.keydir(), os.path.join(self.w, "out", "card.pkpass")
         r = self.finish(keys, out)
-        self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertIn("RESULT OK", r.stdout)
-        self.assertEqual(stat.S_IMODE(os.stat(out).st_mode), 0o600)
+        self.assertEqual(r.returncode, TEST_BUILD, r.stdout)
+        self.assertIn("RESULT OK-TEST-UNPINNED", r.stdout)
+        self.assertEqual(stat.S_IMODE(os.stat(tgt(out)).st_mode), 0o600)
         self.assertEqual(self.leftovers(os.path.dirname(out)), [])
-        self.assertEqual(self.verify(out).returncode, 0)
+        self.assertEqual(self.verify(tgt(out)).returncode, 3)
+        self.assertFalse(os.path.exists(out))
 
     def test_finish_usage_exits_2(self):
         self.assertEqual(sh("bash", FINISH).returncode, 2)
@@ -283,21 +368,21 @@ class FinishTests(Base):
 
     def test_no_overwrite_without_force(self):
         keys, out = self.keydir(), os.path.join(self.w, "out", "card.pkpass")
-        self.assertEqual(self.finish(keys, out).returncode, 0)
-        before = sha256(out)
+        self.assertEqual(self.finish(keys, out).returncode, TEST_BUILD)
+        before = sha256(tgt(out))
         r = self.finish(keys, out)
         self.assertNotEqual(r.returncode, 0, r.stdout)
         self.assertIn("--force", r.stdout)
-        self.assertEqual(sha256(out), before)
+        self.assertEqual(sha256(tgt(out)), before)
 
     def test_force_overwrites(self):
         keys, out = self.keydir(), os.path.join(self.w, "out", "card.pkpass")
-        self.assertEqual(self.finish(keys, out).returncode, 0)
-        before = sha256(out)
+        self.assertEqual(self.finish(keys, out).returncode, TEST_BUILD)
+        before = sha256(tgt(out))
         time.sleep(1.1)  # signingTime has 1 s resolution
         r = self.finish(keys, out, "--force")
-        self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertNotEqual(sha256(out), before)
+        self.assertEqual(r.returncode, TEST_BUILD, r.stdout)
+        self.assertNotEqual(sha256(tgt(out)), before)
 
     def test_lock_symlink_to_outside_file_untouched(self):
         keys, outdir = self.keydir(), os.path.join(self.w, "out")
@@ -307,7 +392,7 @@ class FinishTests(Base):
             f.write("keep me")
         os.symlink(victim, os.path.join(outdir, ".lock"))
         r = self.finish(keys, os.path.join(outdir, "card.pkpass"))
-        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(r.returncode, TEST_BUILD, r.stdout)
         with open(victim) as f:
             self.assertEqual(f.read(), "keep me")
 
@@ -317,7 +402,7 @@ class FinishTests(Base):
         target = os.path.join(self.w, "should-not-exist")
         os.symlink(target, os.path.join(outdir, ".lock"))
         r = self.finish(keys, os.path.join(outdir, "card.pkpass"))
-        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(r.returncode, TEST_BUILD, r.stdout)
         self.assertFalse(os.path.lexists(target))
 
     def test_overlapping_run_refused(self):
@@ -351,7 +436,7 @@ class FinishTests(Base):
         for n in (".makepass-old", ".verifypass-old", ".finish-old"):
             os.mkdir(os.path.join(outdir, n))
         r = self.finish(keys, os.path.join(outdir, "card.pkpass"))
-        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(r.returncode, TEST_BUILD, r.stdout)
         self.assertEqual(self.leftovers(outdir), [])
 
     def test_expect_guards(self):
@@ -360,23 +445,61 @@ class FinishTests(Base):
         self.assertEqual(r.returncode, 1, r.stdout)
         r = self.finish(keys, out, env=dict(os.environ, EXPECT_PASS_TYPE_ID="pass.com.example.other"))
         self.assertEqual(r.returncode, 1, r.stdout)
-        self.assertFalse(os.path.exists(out))
+        self.assertFalse(os.path.exists(out) or os.path.exists(tgt(out)))
         r = self.finish(keys, out, env=dict(os.environ, EXPECT_TEAM_ID=TEAM, EXPECT_PASS_TYPE_ID=PTI))
-        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertEqual(r.returncode, TEST_BUILD, r.stdout)
 
     def test_finish_wrong_issuer_refused(self):
         keys, out = self.keydir(self.badissuer), os.path.join(self.w, "out", "card.pkpass")
         r = self.finish(keys, out)
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("is not exactly", r.stdout)
-        self.assertFalse(os.path.exists(out))
+        self.assertFalse(os.path.exists(out) or os.path.exists(tgt(out)))
 
     def test_finish_mismatched_key_refused(self):
         keys, out = self.keydir(), os.path.join(self.w, "out", "card.pkpass")
         shutil.copy(self.other.key, os.path.join(keys, "pass-signing.key"))
         r = self.finish(keys, out)
         self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertFalse(os.path.exists(out) or os.path.exists(tgt(out)))
+
+    def test_finish_unpinned_never_installed_at_out(self):
+        keys, out = self.keydir(), os.path.join(self.w, "out", "card.pkpass")
+        r = self.finish(keys, out)
+        self.assertEqual(r.returncode, TEST_BUILD, r.stdout)
+        self.assertIn("TEST BUILD", r.stdout)
+        self.assertNotIn("READY", r.stdout)
         self.assertFalse(os.path.exists(out))
+        self.assertTrue(os.path.isfile(tgt(out)))
+
+    def test_finish_pinned_ready_with_patched_pins(self):
+        tool = patched_tool(self.w, self.good)
+        keys, out = self.keydir(), os.path.join(self.w, "out", "card.pkpass")
+        r = sh("bash", os.path.join(tool, "finish.sh"), "--card", CARD, "--logo", LOGO, "--keys", keys, "--out", out)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        self.assertIn("finish: READY", r.stdout)
+        self.assertTrue(os.path.isfile(out))
+        self.assertFalse(os.path.exists(tgt(out)))
+
+    def test_finish_refuses_symlinked_key(self):
+        keys, out = self.keydir(), os.path.join(self.w, "out", "card.pkpass")
+        k = os.path.join(keys, "pass-signing.key")
+        real = os.path.join(self.w, "real.key"); os.replace(k, real); os.symlink(real, k)
+        r = self.finish(keys, out)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("is a symlink; it must be the real key file", r.stdout)  # finish.sh refuses before building
+        self.assertNotIn("makepass", r.stdout)
+        self.assertFalse(os.path.exists(out) or os.path.exists(tgt(out)))
+
+    def test_finish_leading_dash_paths(self):
+        for src, dst in ((CARD, "-card.json"), (LOGO, "-logo.png")):
+            shutil.copy(src, os.path.join(self.w, dst))
+        keys = self.keydir()
+        os.rename(keys, os.path.join(self.w, "-keys"))
+        r = sh("bash", FINISH, "--test-unpinned-chain", "--card", "-card.json", "--logo", "-logo.png",
+               "--icon", "-logo.png", "--keys", "-keys", "--out", "-out/card.pkpass", cwd=self.w)
+        self.assertEqual(r.returncode, TEST_BUILD, r.stdout)
+        self.assertTrue(os.path.isfile(os.path.join(self.w, "-out", "card.TEST-UNPINNED.pkpass")))
 
     def test_temp_dir_cleaned_on_signal(self):
         keys, outdir = self.keydir(), os.path.join(self.w, "out")
@@ -394,7 +517,7 @@ class FinishTests(Base):
         p.wait(timeout=30)
         self.assertEqual(p.returncode, 143)
         self.assertEqual(self.leftovers(outdir), [])
-        self.assertFalse(os.path.exists(out))
+        self.assertFalse(os.path.exists(out) or os.path.exists(tgt(out)))
 
 
 if __name__ == "__main__":

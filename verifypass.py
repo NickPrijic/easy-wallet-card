@@ -10,8 +10,8 @@ Default prints field keys/labels with value LENGTHS only. --show-except K1,K2 pr
 --no-chain: explicitly skip the chain (signature math only); prints WARN and RESULT OK-UNTRUSTED, never RESULT OK.
 --cert PASS_CER: the embedded signer cert must be byte-identical (DER SHA-256) to this cert.
 --card CARD_JSON: pass.json sharingProhibited must equal the card's request (default true, as in makepass).
-Exit codes: 0 = RESULT OK, 1 = RESULT FAILED, 2 = usage error, 3 = RESULT OK-UNTRUSTED (--no-chain:
-every other check passed but the trust chain was not verified).
+Exit codes: 0 = RESULT OK, 1 = RESULT FAILED, 2 = usage error, 3 = every other check passed but the pass is NOT
+Apple-verified: RESULT OK-UNTRUSTED (--no-chain) or RESULT OK-TEST-UNPINNED (--test-unpinned-chain).
 """
 import argparse, atexit, hashlib, json, os, shutil, signal, subprocess, sys, tempfile, zipfile
 
@@ -75,7 +75,9 @@ def dn(pem, which):
 
 def main():
     ap = argparse.ArgumentParser(allow_abbrev=False, description="Easy Wallet Card: verify a .pkpass. "
-                                 "Exit 0 OK, 1 FAILED, 2 usage error, 3 OK-UNTRUSTED (--no-chain).")
+                                 "Exit 0 OK, 1 FAILED, 2 usage error, 3 OK-UNTRUSTED (--no-chain) or "
+                                 "OK-TEST-UNPINNED (--test-unpinned-chain).",
+                                 epilog="A path that starts with '-' must be written as ./-name, or put it after --.")
     ap.add_argument("pkpass")
     ap.add_argument("--root", help="Apple Root CA cert (.cer/.pem) for chain verification")
     ap.add_argument("--wwdr", help="Apple WWDR G4 intermediate (.cer/.pem) for chain verification")
@@ -200,9 +202,11 @@ def main():
         print("RESULT FAILED")
     elif a.no_chain:
         print("RESULT OK-UNTRUSTED (--no-chain: trust chain NOT verified; NOT proof the pass is Apple-signed)")
+    elif a.test_unpinned_chain:
+        print("RESULT OK-TEST-UNPINNED (--test-unpinned-chain: Apple pins NOT enforced; NOT proof the pass is Apple-signed)")
     else:
         print("RESULT OK")
-    sys.exit(1 if not ok_all else (3 if a.no_chain else 0))
+    sys.exit(1 if not ok_all else (3 if (a.no_chain or a.test_unpinned_chain) else 0))
 
 
 if __name__ == "__main__":

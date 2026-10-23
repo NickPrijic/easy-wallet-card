@@ -2,6 +2,9 @@
 # finish.sh - Easy Wallet Card: build a pass with makepass.py, verify it with verifypass.py, and only then move
 # it into place. The private key is handed to openssl by path; its contents are never read or printed.
 # The pass is built inside OUTDIR/.finish-*/ and renamed to OUT only if verifypass reports RESULT OK.
+# Exit codes: 0 = READY (pinned, verified, installed at OUT), 1 = failed, 2 = usage error,
+# 4 = TEST BUILD (--test-unpinned-chain): verified against a test chain only, left at OUT's name with
+#     .TEST-UNPINNED inserted before .pkpass, never at OUT itself.
 # Refuses to overwrite an existing OUT unless --force. Holds flock on OUT's directory itself for the whole run
 # (opened read-only: no lock file is ever created, followed through a symlink, or truncated).
 set -euo pipefail
@@ -18,7 +21,10 @@ KEYDIR must hold pass.cer (Apple's Pass Type ID cert) and pass-signing.key (mode
 Apple Root CA certs (AppleWWDRCAG4.cer, AppleIncRootCertificate.cer) are fetched by fetch-apple-certs.sh if
 missing and must match pinned SHA-256 values.
   --force                 rebuild even if OUT already exists
-  --test-unpinned-chain   skip the Apple SHA-256 pins (throwaway test chains only)
+  --test-unpinned-chain   skip the Apple SHA-256 pins (throwaway test chains only). The pass is NOT installed
+                          at OUT: it is left as OUT with .TEST-UNPINNED before .pkpass, and the exit code is 4.
+Exit codes: 0 READY, 1 failed, 2 usage error, 4 TEST BUILD (not Apple-verified).
+Paths that start with '-' are fine; they are passed on as ./-name.
 Optional guards (environment): EXPECT_TEAM_ID, EXPECT_PASS_TYPE_ID must equal the cert's OU / UID.
 USAGE
   exit 2
@@ -38,6 +44,15 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$CARD" ] && [ -n "$LOGO" ] && [ -n "$KEYS" ] && [ -n "$OUT" ] || usage
+# A relative path starting with '-' would be read as an option by openssl, head, mktemp or argparse.
+dash() { case $1 in -*) printf './%s' "$1" ;; *) printf '%s' "$1" ;; esac; }
+CARD=$(dash "$CARD") LOGO=$(dash "$LOGO") KEYS=$(dash "$KEYS") OUT=$(dash "$OUT")
+[ -z "$ICON" ] || ICON=$(dash "$ICON")
+if [ "$UNPINNED" = 1 ]; then
+  case $OUT in *.pkpass) TARGET=${OUT%.pkpass}.TEST-UNPINNED.pkpass ;; *) TARGET=$OUT.TEST-UNPINNED.pkpass ;; esac
+else
+  TARGET=$OUT
+fi
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 CER=$KEYS/pass.cer KEY=$KEYS/pass-signing.key
@@ -51,8 +66,9 @@ command -v flock >/dev/null 2>&1 || die "flock(1) is required (macOS: brew insta
 for f in "$CARD" "$LOGO" ${ICON:+"$ICON"}; do [ -f "$f" ] || die "not found: $f"; done
 [ -f "$CER" ] || die "missing $CER (save Apple's downloaded pass.cer there)"
 [ -f "$KEY" ] || die "missing $KEY"
-python3 -c 'import os,sys; sys.exit(1 if os.stat(sys.argv[1]).st_mode & 0o077 else 0)' "$KEY" \
-  || die "$KEY is readable by group/others; chmod 600 it first"
+[ ! -L "$KEY" ] || die "$KEY is a symlink; it must be the real key file"
+python3 -c 'import os,stat,sys; st=os.lstat(sys.argv[1]); sys.exit(0 if stat.S_ISREG(st.st_mode) and not st.st_mode & 0o077 else 1)' "$KEY" \
+  || die "$KEY must be a regular file readable only by you; chmod 600 it first"
 
 OUTDIR=$(dirname -- "$OUT")
 [ -d "$OUTDIR" ] || mkdir -p -m 700 -- "$OUTDIR"
@@ -61,7 +77,7 @@ OUTDIR=$(dirname -- "$OUT")
 # followed or truncated. An overlapping run fails fast and never sweeps a live run's temp dir.
 exec 9<"$OUTDIR"
 flock -n 9 || die "another finish.sh run holds the lock on $OUTDIR; try again when it finishes"
-if [ -e "$OUT" ] && [ "$FORCE" != 1 ]; then die "$OUT already exists; pass --force to rebuild"; fi
+if [ -e "$TARGET" ] && [ "$FORCE" != 1 ]; then die "$TARGET already exists; pass --force to rebuild"; fi
 
 # Sweep stale temp dirs left by a killed run (SIGKILL can't be trapped). Safe only because we hold the lock.
 for d in "$OUTDIR"/.makepass-* "$OUTDIR"/.verifypass-* "$OUTDIR"/.finish-*; do
@@ -72,7 +88,7 @@ done
 TMPD=
 trap '[ -z "$TMPD" ] || rm -rf -- "$TMPD"' EXIT
 trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP; trap 'exit 131' QUIT
-TMPD=$(mktemp -d "$OUTDIR/.finish-XXXXXX")
+TMPD=$(mktemp -d -- "$OUTDIR/.finish-XXXXXX")
 
 VERIFY_EXTRA=()
 if [ "$UNPINNED" = 1 ]; then
@@ -83,7 +99,7 @@ else
   "$HERE/fetch-apple-certs.sh" "$KEYS"
 fi
 
-topem() { local f=DER; head -c 11 "$1" | grep -q -- '-----BEGIN' && f=PEM; openssl x509 -inform $f -in "$1" -out "$2"; }
+topem() { local f=DER; head -c 11 -- "$1" | grep -q -- '-----BEGIN' && f=PEM; openssl x509 -inform $f -in "$1" -out "$2"; }
 topem "$CER" "$TMPD/pass.pem"; topem "$WWDR" "$TMPD/wwdr.pem"; topem "$ROOT" "$TMPD/root.pem"
 issuer=$(openssl x509 -in "$TMPD/pass.pem" -noout -issuer -nameopt RFC2253); issuer=${issuer#issuer=}
 wwdr_subj=$(openssl x509 -in "$TMPD/wwdr.pem" -noout -subject -nameopt RFC2253); wwdr_subj=${wwdr_subj#subject=}
@@ -115,10 +131,17 @@ echo "finish: cert public key matches pass-signing.key"
 UNVERIFIED="$TMPD/unverified.pkpass"     # inside TMPD: removed by the EXIT trap on any failure
 "$HERE/makepass.py" --card "$CARD" --logo "$LOGO" ${ICON:+--icon "$ICON"} \
   --cert "$CER" --key "$KEY" --wwdr "$WWDR" --out "$UNVERIFIED"
-if ! "$HERE/verifypass.py" "$UNVERIFIED" --root "$ROOT" --wwdr "$WWDR" --cert "$CER" --card "$CARD" \
-     ${VERIFY_EXTRA[@]+"${VERIFY_EXTRA[@]}"}; then
-  die "verification FAILED; unverified pass deleted, $OUT not written"
-fi
+rc=0
+"$HERE/verifypass.py" "$UNVERIFIED" --root "$ROOT" --wwdr "$WWDR" --cert "$CER" --card "$CARD" \
+  ${VERIFY_EXTRA[@]+"${VERIFY_EXTRA[@]}"} || rc=$?
+# Pinned builds need RESULT OK (exit 0). Test builds need RESULT OK-TEST-UNPINNED (exit 3), nothing else.
+if [ "$UNPINNED" = 1 ]; then want=3; else want=0; fi
+[ "$rc" = "$want" ] || die "verification FAILED (verifypass exit $rc); unverified pass deleted, $TARGET not written"
 chmod 600 "$UNVERIFIED"
-mv -f -- "$UNVERIFIED" "$OUT"
-echo "finish: READY $OUT ($(wc -c <"$OUT" | tr -d ' ') bytes, mode 600)"
+mv -f -- "$UNVERIFIED" "$TARGET"
+size=$(wc -c <"$TARGET" | tr -d ' ')
+if [ "$UNPINNED" = 1 ]; then
+  echo "finish: TEST BUILD $TARGET ($size bytes, mode 600): UNPINNED, NOT Apple-verified, NOT installed at $OUT"
+  exit 4
+fi
+echo "finish: READY $OUT ($size bytes, mode 600)"

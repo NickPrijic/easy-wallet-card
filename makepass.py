@@ -4,7 +4,7 @@
 Python 3 stdlib + Pillow (image resizing) + the openssl CLI. See README.md.
 Never prints field values: card data can hold member/policy IDs.
 """
-import argparse, atexit, hashlib, json, os, re, shutil, signal, subprocess, sys, tempfile, zipfile
+import argparse, atexit, hashlib, json, os, re, shutil, signal, stat, subprocess, sys, tempfile, zipfile
 
 FORBIDDEN = ("webServiceURL", "authenticationToken")
 BARCODE_FORMATS = {"PKBarcodeFormatQR", "PKBarcodeFormatPDF417", "PKBarcodeFormatAztec", "PKBarcodeFormatCode128"}
@@ -180,7 +180,8 @@ def sha1(path):
 
 
 def main():
-    ap = argparse.ArgumentParser(allow_abbrev=False, description="Easy Wallet Card: build a signed generic Apple Wallet .pkpass from card JSON + logo.")
+    ap = argparse.ArgumentParser(allow_abbrev=False, description="Easy Wallet Card: build a signed generic Apple Wallet .pkpass from card JSON + logo.",
+                                 epilog="A path that starts with '-' must be written as ./-name or --card=-name.")
     ap.add_argument("--card", required=True, help="card JSON (see cards/sample-card.json)")
     ap.add_argument("--logo", required=True, help="logo image; resized to logo.png/@2x/@3x (and icon if no --icon)")
     ap.add_argument("--icon", help="optional square-ish image for icon.png/@2x/@3x")
@@ -193,8 +194,11 @@ def main():
     for p in (a.card, a.logo, a.cert, a.key, a.wwdr) + ((a.icon,) if a.icon else ()):
         if not os.path.isfile(p):
             die(f"not found: {p}")
-    if os.stat(a.key).st_mode & 0o077:
-        die(f"key file {a.key} is readable by group/others; chmod 600 it first")
+    if os.path.islink(a.key):
+        die(f"key file {a.key} is a symlink; point --key at the real file")
+    st = os.lstat(a.key)
+    if not stat.S_ISREG(st.st_mode) or st.st_mode & 0o077:
+        die(f"key file {a.key} must be a regular file readable only by you; chmod 600 it first")
     os.umask(0o077)
     with open(a.card) as f:
         card = json.load(f)

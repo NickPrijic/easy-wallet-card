@@ -9,7 +9,19 @@
 *.keystore
 keystore.properties
 local.properties
+*.certSigningRequest
+*.crt
+*.der
+*.pfx
 keys/
 out/
+# Your own cards hold member IDs: only the samples are tracked
+cards/*
+!cards/sample-card.json
+!cards/sample-logo.png
+# Build temp dirs (can hold card fields)
+.makepass-*/
+.verifypass-*/
+.finish-*/
 __pycache__/
 *.pyc
