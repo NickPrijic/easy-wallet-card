@@ -11,8 +11,8 @@ steps. Don't work from memory or from this file; read `AGENTS.md` and follow it 
 
 ## Start
 1. Use an existing clone if the person names one or the current directory is one (its
-   `git remote get-url origin` is `https://github.com/Nickostick/easy-wallet-card`). Don't search the whole
-   disk for one. Otherwise clone it: `git clone https://github.com/Nickostick/easy-wallet-card`
+   `git remote get-url origin` is `https://github.com/NickPrijic/easy-wallet-card`). Don't search the whole
+   disk for one. Otherwise clone it: `git clone https://github.com/NickPrijic/easy-wallet-card`
 2. `cd` into the clone and read `AGENTS.md` in full, then `README.md` if you need background.
 3. Follow `AGENTS.md` from step 1. Run every command from the repo root.
 
