@@ -38,7 +38,7 @@
     {
       "key": "howto",
       "label": "How to join",
-      "value": "Scan the QR code or join SSID ExampleGuest with the guest password on the front."
+      "value": "Scan the QR code to join ExampleGuest. The password is inside the code."
     },
     {
       "key": "note",
