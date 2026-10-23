@@ -48,7 +48,7 @@ Field keys must be unique across all sections. `--logo` is fitted into logo.png 
 ## 3. Build and verify
 The easy way builds, verifies, and only then moves the pass into place:
 ```
-./finish.sh --card cards/my-card.json --logo my-logo.png [--icon my-mark.png] --keys keys --out out/my-card.pkpass
+./finish.sh --card cards/my-card.json --logo cards/my-logo.png [--icon cards/my-mark.png] --keys keys --out out/my-card.pkpass
 ```
 - It checks the Apple certs' pinned SHA-256, requires the cert's issuer DN to be exactly Apple's WWDR G4,
   runs `openssl verify -no-CApath -no-CAfile -no-CAstore` against only those two certs, and checks that the
@@ -68,7 +68,7 @@ The easy way builds, verifies, and only then moves the pass into place:
 
 Or run the two steps yourself:
 ```
-./makepass.py --card cards/my-card.json --logo my-logo.png --cert keys/pass.cer --key keys/pass-signing.key \
+./makepass.py --card cards/my-card.json --logo cards/my-logo.png --cert keys/pass.cer --key keys/pass-signing.key \
   --wwdr keys/AppleWWDRCAG4.cer --out out/my-card.pkpass
 ./verifypass.py out/my-card.pkpass --root keys/AppleIncRootCertificate.cer --wwdr keys/AppleWWDRCAG4.cer \
   --cert keys/pass.cer --card cards/my-card.json

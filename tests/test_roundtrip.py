@@ -314,7 +314,7 @@ class MakeVerifyTests(Base):
         shutil.copy(os.path.join(REPO, ".gitignore"), g)
         for n in ("sample-card.json", "sample-logo.png"):
             shutil.copy(os.path.join(REPO, "cards", n), os.path.join(g, "cards", n))
-        private = ["cards/my-card.json", "cards/my-logo.png", "x.certSigningRequest", "x.crt", "x.der", "x.pfx",
+        private = ["cards/my-card.json", "cards/my-logo.png", "cards/my-mark.png", ".lock", "x.certSigningRequest", "x.crt", "x.der", "x.pfx",
                    "x.key", "x.pem", "x.p12", "x.cer", "x.csr", "x.pkpass", "keys/pass.cer", "out/x.pkpass",
                    ".makepass-ab12/pass.json", ".verifypass-cd34/pass/pass.json", ".finish-ef56/unverified.pkpass",
                    "sub/.makepass-x/pass.json"]

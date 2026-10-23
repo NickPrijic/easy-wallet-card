@@ -25,3 +25,7 @@ cards/*
 .finish-*/
 __pycache__/
 *.pyc
+
+# finish.sh / lock files at the repo root
+.lock
+*.lock
