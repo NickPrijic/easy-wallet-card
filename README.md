@@ -52,7 +52,7 @@ The easy way builds, verifies, and only then moves the pass into place:
 ```
 - It checks the Apple certs' pinned SHA-256, requires the cert's issuer DN to be exactly Apple's WWDR G4,
   runs `openssl verify -no-CApath -no-CAfile -no-CAstore` against only those two certs, and checks that the
-  cert isn't expired and matches your key.
+  cert isn't expired and matches your key (that public-key check runs inside makepass.py on its one open of the key).
 - Optional guards: set `EXPECT_TEAM_ID` and/or `EXPECT_PASS_TYPE_ID` and it refuses a cert whose OU / UID
   don't match. Handy if you have more than one Apple team.
 - It builds inside `out/.finish-*/` and renames the pass to `--out` only if `verifypass.py` reports RESULT OK.
@@ -102,8 +102,12 @@ AirDrop or email the `.pkpass` to your iPhone and tap it to add it to Wallet.
 4 (TEST BUILD with `--test-unpinned-chain`, left at the `.TEST-UNPINNED.pkpass` name, not Apple-verified).
 
 ## Privacy
-The private key is handed to `openssl` by path. Its contents are never read, piped or printed, and the tools
-refuse a key file that group or others can read, or that is a symlink. Outputs are written mode 600. Temp files live in private
+`makepass.py` opens the private key exactly once, with `O_NOFOLLOW` and `O_NOCTTY`, checks that open file
+(a regular file that group and others can't read), and hands it to `openssl` as `/dev/fd/N`. It is never
+reopened by path, so swapping the file mid-run can't change which key signs. `finish.sh` never opens the key.
+The tools refuse a key file that is a symlink, or whose path goes through a symlinked directory (for example a
+`keys/` that is a symlink). Root-owned system links such as macOS `/tmp` and `/var` are allowed. The tools
+never read, pipe or print the key's contents. Outputs are written mode 600. Temp files live in private
 dirs next to the output, never in /tmp. `makepass.py` prints no field values.
 
 ## Tests

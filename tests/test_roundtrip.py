@@ -520,5 +520,170 @@ class FinishTests(Base):
         self.assertFalse(os.path.exists(out) or os.path.exists(tgt(out)))
 
 
+class KeyOpenTests(Base):
+    """N2: no symlink anywhere on the key's path. N3: the key is opened once (O_NOFOLLOW) and openssl only ever
+    gets that fd as /dev/fd/N, so swapping the path mid-run can't change which key signs."""
+
+    def _shim(self, delay_smime=0.0):
+        shim = os.path.join(self.w, "shim"); os.makedirs(shim, exist_ok=True)
+        log, mark = os.path.join(self.w, "openssl-argv.log"), os.path.join(self.w, "smime-started")
+        with open(os.path.join(shim, "openssl"), "w") as f:
+            f.write("#!/bin/sh\n"
+                    f"for a in \"$@\"; do printf '%s\\n' \"$a\" >>'{log}'; done\n"
+                    f"if [ \"$1\" = smime ] && [ \"$2\" = -binary ]; then : >'{mark}'; sleep {delay_smime}; fi\n"
+                    f"exec '{OPENSSL}' \"$@\"\n")
+        os.chmod(os.path.join(shim, "openssl"), 0o755)
+        return dict(os.environ, PATH=shim + os.pathsep + os.environ["PATH"]), log, mark
+
+    def _swap_to_644_symlink(self, key):
+        """Replace the key path with a symlink to a mode-644 copy of a DIFFERENT key (atomic rename)."""
+        evil = os.path.join(self.w, "evil-644.key")
+        shutil.copy(self.other.key, evil); os.chmod(evil, 0o644)
+        tmp = key + ".swap"; os.symlink(evil, tmp); os.replace(tmp, key)
+        self.assertTrue(os.path.islink(key))
+
+    def _refuse_msg(self, r):
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertFalse(os.path.exists(os.path.join(self.w, "out", "card.pkpass")))
+        low = (r.stdout or "").lower()
+        self.assertTrue("symlink" in low or "readable only by you" in low or "not a directory" in low
+                        or "not found" in low or "unsafe" in low, r.stdout)
+
+    def test_makepass_refuses_symlinked_key_dir(self):
+        real = os.path.join(self.w, "realkeys"); os.mkdir(real, 0o700)
+        shutil.copy(self.good.key, os.path.join(real, "pass-signing.key"))
+        os.chmod(os.path.join(real, "pass-signing.key"), 0o600)
+        os.symlink(real, os.path.join(self.w, "keys"))
+        os.makedirs(os.path.join(self.w, "a")); os.symlink(self.w, os.path.join(self.w, "a", "link"))
+        out = os.path.join(self.w, "out", "card.pkpass"); os.makedirs(os.path.dirname(out), exist_ok=True)
+        # symlinked keys/ parent
+        r = sh(sys.executable, MAKEPASS, "--card", CARD, "--logo", LOGO, "--cert", self.good.cert,
+               "--key", os.path.join(self.w, "keys", "pass-signing.key"), "--wwdr", self.good.inter, "--out", out)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("symlink", r.stdout.lower())
+        self.assertFalse(os.path.exists(out))
+        # first / middle component link: a/link/keys/pass-signing.key
+        r = sh(sys.executable, MAKEPASS, "--card", CARD, "--logo", LOGO, "--cert", self.good.cert,
+               "--key", os.path.join(self.w, "a", "link", "keys", "pass-signing.key"),
+               "--wwdr", self.good.inter, "--out", out)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("symlink", r.stdout.lower())
+        # trailing slash
+        r = sh(sys.executable, MAKEPASS, "--card", CARD, "--logo", LOGO, "--cert", self.good.cert,
+               "--key", os.path.join(self.w, "keys", "pass-signing.key") + "/",
+               "--wwdr", self.good.inter, "--out", out)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        # key-is-symlink (already covered by test_makepass_refuses_symlinked_key; keep one here too)
+        kdir = os.path.join(self.w, "plainkeys"); os.mkdir(kdir, 0o700)
+        realk = os.path.join(kdir, "real.key"); shutil.copy(self.good.key, realk); os.chmod(realk, 0o600)
+        linkk = os.path.join(kdir, "pass-signing.key"); os.symlink(realk, linkk)
+        r = sh(sys.executable, MAKEPASS, "--card", CARD, "--logo", LOGO, "--cert", self.good.cert,
+               "--key", linkk, "--wwdr", self.good.inter, "--out", out)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("symlink", r.stdout.lower())
+        # directory as key
+        r = sh(sys.executable, MAKEPASS, "--card", CARD, "--logo", LOGO, "--cert", self.good.cert,
+               "--key", kdir, "--wwdr", self.good.inter, "--out", out)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        # mode 640 / 604
+        for mode in (0o640, 0o604):
+            bad = os.path.join(kdir, f"m{mode:o}.key")
+            shutil.copy(self.good.key, bad); os.chmod(bad, mode)
+            r = sh(sys.executable, MAKEPASS, "--card", CARD, "--logo", LOGO, "--cert", self.good.cert,
+                   "--key", bad, "--wwdr", self.good.inter, "--out", out)
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("readable only by you", r.stdout)
+        # hardlink to 644 refused (same inode, mode of the opened fd's inode)
+        hard = os.path.join(kdir, "hard.key"); soft644 = os.path.join(kdir, "soft644.key")
+        shutil.copy(self.good.key, soft644); os.chmod(soft644, 0o644)
+        try:
+            os.link(soft644, hard)
+        except OSError:
+            self.skipTest("hardlink not supported here")
+        r = sh(sys.executable, MAKEPASS, "--card", CARD, "--logo", LOGO, "--cert", self.good.cert,
+               "--key", hard, "--wwdr", self.good.inter, "--out", out)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        # FIFO: must not hang
+        fifo = os.path.join(kdir, "fifo.key")
+        os.mkfifo(fifo)
+        r = sh(sys.executable, MAKEPASS, "--card", CARD, "--logo", LOGO, "--cert", self.good.cert,
+               "--key", fifo, "--wwdr", self.good.inter, "--out", out, timeout=5)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        # symlink/.. form: keys points at real, path uses keys/../realkeys/pass-signing.key through the link
+        # (lexical .. after a symlink component — still walks the symlink dir first and refuses)
+        r = sh(sys.executable, MAKEPASS, "--card", CARD, "--logo", LOGO, "--cert", self.good.cert,
+               "--key", os.path.join(self.w, "keys", "..", "realkeys", "pass-signing.key"),
+               "--wwdr", self.good.inter, "--out", out)
+        self.assertEqual(r.returncode, 1, r.stdout)
+
+    def test_finish_refuses_symlinked_key_dir(self):
+        real = os.path.join(self.w, "realkeys"); os.mkdir(real, 0o700)
+        for n in ("pass-signing.key",):
+            shutil.copy(self.good.key, os.path.join(real, n)); os.chmod(os.path.join(real, n), 0o600)
+        # finish's keydir() lays out certs; build a normal keydir then replace keys with a symlink
+        keys = self.keydir()
+        # Move real contents aside and make keys a symlink to realkeys with the signing key
+        # Simpler: point --keys at a dir whose pass-signing.key path goes through a symlink parent.
+        link_root = os.path.join(self.w, "linkroot"); os.makedirs(link_root)
+        # Copy the whole keydir into realkeys-style and symlink
+        target = os.path.join(self.w, "real-keydir")
+        shutil.copytree(keys, target)
+        os.symlink(target, os.path.join(self.w, "symkeys"))
+        out = os.path.join(self.w, "out", "card.pkpass")
+        r = self.finish(os.path.join(self.w, "symkeys"), out)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        # Must be finish.sh's open_key pre-check (not makepass): old finish.sh lacks this and would reach makepass.
+        self.assertIn("finish:", r.stdout)
+        self.assertIn("symlink", r.stdout.lower())
+        self.assertNotIn("makepass:", r.stdout)
+        self.assertFalse(os.path.exists(out) or os.path.exists(tgt(out)))
+
+    def test_makepass_signs_with_opened_fd_when_key_swapped_mid_run(self):
+        env, _, mark = self._shim(delay_smime=2)
+        out = os.path.join(self.w, "out", "card.pkpass"); os.makedirs(os.path.dirname(out), exist_ok=True)
+        key = os.path.join(self.w, "swap.key"); shutil.copy(self.good.key, key); os.chmod(key, 0o600)
+        p = subprocess.Popen(
+            [sys.executable, MAKEPASS, "--card", CARD, "--logo", LOGO, "--cert", self.good.cert,
+             "--key", key, "--wwdr", self.good.inter, "--out", out],
+            env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.assertTrue(MakeVerifyTests._wait_for(lambda: os.path.exists(mark)))
+        self._swap_to_644_symlink(key)
+        so, _ = p.communicate(timeout=60)
+        self.assertEqual(p.returncode, 0, so)
+        # Signed with the original key (matches good cert); verify OK-TEST-UNPINNED
+        self.assertEqual(self.verify(out, None, "--cert", self.good.cert).returncode, 3)
+
+    def test_finish_signs_with_opened_fd_when_key_swapped_mid_run(self):
+        env, _, mark = self._shim(delay_smime=2)
+        keys, out = self.keydir(), os.path.join(self.w, "out", "card.pkpass")
+        p = subprocess.Popen(self.finish_args(keys, out), env=env, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, text=True)
+        self.assertTrue(MakeVerifyTests._wait_for(lambda: os.path.exists(mark)))
+        self._swap_to_644_symlink(os.path.join(keys, "pass-signing.key"))
+        so, _ = p.communicate(timeout=60)
+        self.assertEqual(p.returncode, TEST_BUILD, so)
+        self.assertEqual(self.verify(tgt(out), None, "--cert", self.good.cert).returncode, 3)
+
+    def test_openssl_never_gets_the_key_path(self):
+        env, log, _ = self._shim()
+        keys, out = self.keydir(), os.path.join(self.w, "out", "card.pkpass")
+        r = self.finish(keys, out, env=env)
+        self.assertEqual(r.returncode, TEST_BUILD, r.stdout)
+        with open(log) as f:
+            argv = f.read().splitlines()
+        self.assertFalse([a for a in argv if "pass-signing.key" in a], "openssl was given the key by path")
+        self.assertGreaterEqual(sum(a.startswith("/dev/fd/") for a in argv), 2)  # pubkey match + signing
+
+    def test_system_link_rule(self):
+        sys.path.insert(0, REPO)
+        try:
+            import makepass
+        finally:
+            sys.path.remove(REPO)
+        fake = lambda uid: os.stat_result((stat.S_IFLNK | 0o777, 0, 0, 1, uid, 0, 0, 0, 0, 0))
+        self.assertEqual(makepass._system_link(fake(0)), os.geteuid() != 0)  # root-owned, e.g. macOS /var
+        self.assertFalse(makepass._system_link(fake(os.geteuid() or 1000)))  # anything a user could plant
+
+
 if __name__ == "__main__":
     unittest.main()

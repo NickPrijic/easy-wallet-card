@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # finish.sh - Easy Wallet Card: build a pass with makepass.py, verify it with verifypass.py, and only then move
-# it into place. The private key is handed to openssl by path; its contents are never read or printed.
+# it into place. finish.sh never opens the private key: it only lstat-checks the path (no symlinked file or
+# parent dir), and makepass.py opens it once with O_NOFOLLOW, checks that fd, and hands it to openssl as
+# /dev/fd/N (including for the cert/key public-key match). Its contents are never read or printed.
 # The pass is built inside OUTDIR/.finish-*/ and renamed to OUT only if verifypass reports RESULT OK.
 # Exit codes: 0 = READY (pinned, verified, installed at OUT), 1 = failed, 2 = usage error,
 # 4 = TEST BUILD (--test-unpinned-chain): verified against a test chain only, left at OUT's name with
@@ -61,7 +63,6 @@ WWDR_DN='C=US,O=Apple Inc.,OU=G4,CN=Apple Worldwide Developer Relations Certific
 NO_DEFAULT_TRUST=(-no-CApath -no-CAfile -no-CAstore)
 
 die() { echo "finish: $*" >&2; exit 1; }
-sha256s() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
 command -v flock >/dev/null 2>&1 || die "flock(1) is required (macOS: brew install flock)"
 for f in "$CARD" "$LOGO" ${ICON:+"$ICON"}; do [ -f "$f" ] || die "not found: $f"; done
 [ -f "$CER" ] || die "missing $CER (save Apple's downloaded pass.cer there)"
@@ -69,6 +70,10 @@ for f in "$CARD" "$LOGO" ${ICON:+"$ICON"}; do [ -f "$f" ] || die "not found: $f"
 [ ! -L "$KEY" ] || die "$KEY is a symlink; it must be the real key file"
 python3 -c 'import os,stat,sys; st=os.lstat(sys.argv[1]); sys.exit(0 if stat.S_ISREG(st.st_mode) and not st.st_mode & 0o077 else 1)' "$KEY" \
   || die "$KEY must be a regular file readable only by you; chmod 600 it first"
+# No symlink anywhere on the key's path (e.g. a symlinked keys/ dir). Same check makepass.py runs; lstat only.
+keyerr=$(python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import makepass
+try: makepass.open_key(sys.argv[2], open_file=False)
+except makepass.KeyRefused as e: print(e); sys.exit(1)' "$HERE" "$KEY" 2>&1) || die "${keyerr:-unsafe key path $KEY}"
 
 OUTDIR=$(dirname -- "$OUT")
 [ -d "$OUTDIR" ] || mkdir -p -m 700 -- "$OUTDIR"
@@ -122,12 +127,7 @@ if [ -n "${EXPECT_PASS_TYPE_ID:-}" ] && [ "$uid" != "$EXPECT_PASS_TYPE_ID" ]; th
   die "cert Pass Type ID (UID) '$uid' is not EXPECT_PASS_TYPE_ID '$EXPECT_PASS_TYPE_ID', refusing"
 fi
 
-# Public-key match (only public keys are compared; the private key is passed by path)
-a=$(openssl x509 -in "$TMPD/pass.pem" -noout -pubkey | openssl pkey -pubin -outform DER | sha256s)
-b=$(openssl pkey -in "$KEY" -pubout -outform DER | sha256s)
-[ "$a" = "$b" ] || die "pass.cer does not match pass-signing.key (was the CSR made from this key?)"
-echo "finish: cert public key matches pass-signing.key"
-
+# The cert/key public-key match runs inside makepass.py on its one O_NOFOLLOW fd: finish.sh never opens the key.
 UNVERIFIED="$TMPD/unverified.pkpass"     # inside TMPD: removed by the EXIT trap on any failure
 "$HERE/makepass.py" --card "$CARD" --logo "$LOGO" ${ICON:+--icon "$ICON"} \
   --cert "$CER" --key "$KEY" --wwdr "$WWDR" --out "$UNVERIFIED"

@@ -4,7 +4,7 @@
 Python 3 stdlib + Pillow (image resizing) + the openssl CLI. See README.md.
 Never prints field values: card data can hold member/policy IDs.
 """
-import argparse, atexit, hashlib, json, os, re, shutil, signal, stat, subprocess, sys, tempfile, zipfile
+import argparse, atexit, errno, fcntl, hashlib, json, os, re, shutil, signal, stat, subprocess, sys, tempfile, zipfile
 
 FORBIDDEN = ("webServiceURL", "authenticationToken")
 BARCODE_FORMATS = {"PKBarcodeFormatQR", "PKBarcodeFormatPDF417", "PKBarcodeFormatAztec", "PKBarcodeFormatCode128"}
@@ -40,13 +40,120 @@ def die(msg):
     sys.exit(1)
 
 
-def openssl(*args, capture=False):
+def openssl(*args, capture=False, binary=False, fds=()):
     r = subprocess.run(["openssl", *args], stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
-                       stderr=subprocess.PIPE, text=True)
+                       stderr=subprocess.PIPE, pass_fds=fds)
+    err = r.stderr.decode("utf-8", "replace")
     if r.returncode != 0:
-        die(f"openssl {args[0]} failed: {r.stderr.strip()[:500]}")
-    return r.stdout if capture else None
+        die(f"openssl {args[0]} failed: {err.strip()[:500]}")
+    if not capture:
+        return None
+    return r.stdout if binary else r.stdout.decode("utf-8", "replace")
 
+
+class KeyRefused(Exception):
+    """The key path or file is unsafe; the message says why (never the key's contents)."""
+
+
+def _system_link(st):
+    """Root-owned symlinks (macOS /tmp, /var, /etc) can't be planted by a same-uid attacker. Allowed only
+    when we aren't root ourselves; every other symlinked directory on the key's path is refused."""
+    return st.st_uid == 0 and os.geteuid() != 0
+
+
+def key_arg(fd):
+    """Path openssl should use for an already-open key fd (/dev/fd/N)."""
+    return f"/dev/fd/{fd}"
+
+
+def open_key(path, open_file=True):
+    """Open the private key exactly once, without following a symlink anywhere on its path.
+
+    Every directory component is opened relative to the previous one with O_NOFOLLOW (so a symlinked keys/ dir
+    or any symlinked parent is refused). Root-owned system links are allowed when we aren't root. The key file
+    itself is opened with O_NOFOLLOW | O_NOCTTY | O_NONBLOCK, then fstat-checked on that fd. When open_file is
+    False (finish.sh pre-check), directories are walked the same way and the final component is only lstat'd.
+    """
+    if not path:
+        raise KeyRefused("key path is empty")
+    while len(path) > 1 and path.endswith("/"):
+        path = path[:-1]
+    if os.path.isabs(path):
+        cur_fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+        rest = [p for p in path.lstrip("/").split("/") if p and p != "."]
+    else:
+        cur_fd = os.open(".", os.O_RDONLY | os.O_DIRECTORY)
+        rest = [p for p in path.split("/") if p and p != "."]
+    dir_fds = [cur_fd]
+    kfd = None
+    try:
+        if not rest:
+            raise KeyRefused(f"key path {path} did not end in a file")
+        *dirs, final = rest
+        for name in dirs:
+            try:
+                st = os.stat(name, dir_fd=cur_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                raise KeyRefused(f"key path component {name!r} not found") from None
+            except OSError as e:
+                raise KeyRefused(f"key path component {name!r}: {e.strerror}") from None
+            if stat.S_ISLNK(st.st_mode) and not _system_link(st):
+                raise KeyRefused(
+                    f"key directory {name} is a symlink; keep the key in a real directory "
+                    f"(no symlinked parents on the key's path)")
+            flags = os.O_RDONLY | os.O_DIRECTORY
+            if stat.S_ISLNK(st.st_mode) and _system_link(st):
+                pass  # follow this one system link
+            else:
+                if not stat.S_ISDIR(st.st_mode):
+                    raise KeyRefused(f"key path component {name!r} is not a directory")
+                flags |= os.O_NOFOLLOW
+            try:
+                next_fd = os.open(name, flags, dir_fd=cur_fd)
+            except OSError as e:
+                if e.errno in (errno.ELOOP, errno.ENOTDIR):
+                    raise KeyRefused(
+                        f"key directory {name} is a symlink; keep the key in a real directory "
+                        f"(no symlinked parents on the key's path)") from None
+                raise KeyRefused(f"key directory {name}: {e.strerror}") from None
+            dir_fds.append(next_fd)
+            cur_fd = next_fd
+        try:
+            st = os.stat(final, dir_fd=cur_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            raise KeyRefused(f"key path component {final!r} not found") from None
+        except OSError as e:
+            raise KeyRefused(f"key path component {final!r}: {e.strerror}") from None
+        if not open_file:
+            if stat.S_ISLNK(st.st_mode):
+                raise KeyRefused(f"key file {path} is a symlink; point --key at the real file")
+            if not stat.S_ISREG(st.st_mode) or st.st_mode & 0o077:
+                raise KeyRefused(
+                    f"key file {path} must be a regular file readable only by you; chmod 600 it first")
+            return None
+        try:
+            kfd = os.open(final, os.O_RDONLY | os.O_NOFOLLOW | os.O_NOCTTY | os.O_NONBLOCK, dir_fd=cur_fd)
+        except OSError as e:
+            if e.errno in (errno.ELOOP, errno.EINVAL) or stat.S_ISLNK(st.st_mode):
+                raise KeyRefused(f"key file {path} is a symlink; point --key at the real file") from None
+            raise KeyRefused(f"cannot open key file {path}: {e.strerror}") from None
+    finally:
+        for d in dir_fds:
+            try:
+                os.close(d)
+            except OSError:
+                pass
+    if kfd is None:
+        raise KeyRefused(f"key path {path} did not end in a file")
+    st = os.fstat(kfd)
+    if not stat.S_ISREG(st.st_mode) or st.st_mode & 0o077:
+        os.close(kfd)
+        raise KeyRefused(
+            f"key file {path} must be a regular file readable only by you; chmod 600 it first")
+    flags = fcntl.fcntl(kfd, fcntl.F_GETFL)
+    fcntl.fcntl(kfd, fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
+    os.lseek(kfd, 0, os.SEEK_SET)
+    return kfd
 
 def cert_to_pem(src, dst):
     """Accept DER (.cer from Apple) or PEM; write PEM (public cert only)."""
@@ -194,11 +301,10 @@ def main():
     for p in (a.card, a.logo, a.cert, a.key, a.wwdr) + ((a.icon,) if a.icon else ()):
         if not os.path.isfile(p):
             die(f"not found: {p}")
-    if os.path.islink(a.key):
-        die(f"key file {a.key} is a symlink; point --key at the real file")
-    st = os.lstat(a.key)
-    if not stat.S_ISREG(st.st_mode) or st.st_mode & 0o077:
-        die(f"key file {a.key} must be a regular file readable only by you; chmod 600 it first")
+    try:
+        kfd = open_key(a.key)  # the only open of the key; everything below uses this fd
+    except KeyRefused as e:
+        die(str(e))
     os.umask(0o077)
     with open(a.card) as f:
         card = json.load(f)
@@ -218,6 +324,16 @@ def main():
         cert_to_pem(a.cert, certpem)
         cert_to_pem(a.wwdr, wwdrpem)
         pti, team = cert_ids(certpem)
+        # Public-key match, on the opened fd (only public keys are compared; no private bytes are read here)
+        certpub = os.path.join(work, "signer-pub.pem")
+        openssl("x509", "-in", certpem, "-noout", "-pubkey", "-out", certpub)
+        a_pub = openssl("pkey", "-pubin", "-in", certpub, "-outform", "DER", capture=True, binary=True)
+        os.lseek(kfd, 0, os.SEEK_SET)
+        b_pub = openssl("pkey", "-in", key_arg(kfd), "-pubout", "-outform", "DER", capture=True, binary=True,
+                        fds=(kfd,))
+        if hashlib.sha256(a_pub).digest() != hashlib.sha256(b_pub).digest():
+            die("cert does not match the key (was the CSR made from this key?)")
+        print("makepass: cert public key matches the key")
 
         pj = build_pass_json(card, pti, team)
         with open(os.path.join(stage, "pass.json"), "w", encoding="utf-8") as f:
@@ -229,8 +345,9 @@ def main():
         mpath = os.path.join(stage, "manifest.json")
         with open(mpath, "w") as f:
             json.dump(manifest, f, indent=2, sort_keys=True)
-        openssl("smime", "-binary", "-sign", "-signer", certpem, "-inkey", a.key, "-certfile", wwdrpem,
-                "-in", mpath, "-out", os.path.join(stage, "signature"), "-outform", "DER")
+        os.lseek(kfd, 0, os.SEEK_SET)
+        openssl("smime", "-binary", "-sign", "-signer", certpem, "-inkey", key_arg(kfd), "-certfile", wwdrpem,
+                "-in", mpath, "-out", os.path.join(stage, "signature"), "-outform", "DER", fds=(kfd,))
 
         tmpout = os.path.join(work, "out.pkpass")
         with zipfile.ZipFile(tmpout, "w", zipfile.ZIP_DEFLATED) as z:
@@ -239,6 +356,10 @@ def main():
         os.chmod(tmpout, 0o600)
         os.replace(tmpout, a.out)
     finally:
+        try:
+            os.close(kfd)
+        except OSError:
+            pass
         _cleanup()
 
     nfields = sum(len(v) for v in pj["generic"].values())
