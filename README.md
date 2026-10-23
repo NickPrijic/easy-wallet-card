@@ -1,5 +1,7 @@
 # Easy Wallet Card
 
+If you are an AI agent, start with [`AGENTS.md`](AGENTS.md).
+
 Easy Wallet Card turns a small JSON file and a logo into a signed Apple Wallet pass (`.pkpass`, generic style),
 for example an insurance or membership card you want on your phone.
 It has no web service, no hosting, no `webServiceURL`/`authenticationToken`, and uses no third-party service.
