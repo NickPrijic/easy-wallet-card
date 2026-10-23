@@ -128,6 +128,25 @@ The tools refuse a key file that is a symlink, or whose path goes through a syml
 never read, pipe or print the key's contents. Outputs are written mode 600. Temp files live in private
 dirs next to the output, never in /tmp. `makepass.py` prints no field values.
 
+## Install the agent skill
+`skills/easy-wallet-card/SKILL.md` is an [Agent Skills](https://agentskills.io/specification) skill. Once it is
+installed, asking your agent to "put my gym card in Apple Wallet" points it to this repo and `AGENTS.md`. Copy
+the whole `skills/easy-wallet-card` folder (keep the folder name) from a clone of this repo:
+
+| agent | personal (all projects) | one project |
+|---|---|---|
+| Claude Code | `~/.claude/skills/easy-wallet-card/SKILL.md` | `.claude/skills/easy-wallet-card/SKILL.md` |
+| Cursor | `~/.cursor/skills/easy-wallet-card/SKILL.md` or `~/.agents/skills/...` | `.cursor/skills/easy-wallet-card/SKILL.md` or `.agents/skills/...` |
+| Other Agent Skills clients | `~/.agents/skills/easy-wallet-card/SKILL.md` | `.agents/skills/easy-wallet-card/SKILL.md` |
+
+For example, for Claude Code:
+```
+mkdir -p ~/.claude/skills && cp -R skills/easy-wallet-card ~/.claude/skills/
+```
+Claude Code picks up changes in a skills folder it already watches; if `~/.claude/skills` is new, restart it or
+run `/reload-skills`. Cursor also reads `~/.claude/skills/`. `.agents/skills/` is a cross-client convention, not
+part of the spec, so check your agent's docs if it doesn't find the skill.
+
 ## Tests
 ```
 make test       # builds passes with a throwaway self-signed test CA chain; no network, no Apple account
